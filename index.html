@@ -36,48 +36,40 @@
         const COLLISION_DAMPING = 0.65;
         const AIR_DRAG = 2.5;
         const fixedDt = 1 / 60;
-        const ERASER_RADIUS = 20;
+        const ERASER_RADIUS = 16;
 
         let ball = { x: 400, y: 100, vx: 0, vy: 0, radius: 20 };
         let lines = [];
-        let drawing = false;   // инструмент выбран
-        let erasing = false;   // инструмент выбран
+        let drawing = false;
+        let erasing = false;
         let lastX = 0, lastY = 0;
         let keys = {};
         let accumulator = 0;
         let lastTime = performance.now();
 
-        // ────────────────────────────────────────────────
-        // Коллизии
-        // ────────────────────────────────────────────────
+        // ─── Коллизии ─────────────────────────────────────────────
 
         function distanceToSegment(p, a, b) {
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
+            const dx = b.x - a.x; const dy = b.y - a.y;
             const len2 = dx*dx + dy*dy;
             if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
             let t = ((p.x - a.x)*dx + (p.y - a.y)*dy) / len2;
             t = Math.max(0, Math.min(1, t));
-            const projx = a.x + t*dx;
-            const projy = a.y + t*dy;
+            const projx = a.x + t*dx; const projy = a.y + t*dy;
             return Math.hypot(p.x - projx, p.y - projy);
         }
 
         function getLineCollisionInfo(c, a, b) {
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
+            const dx = b.x - a.x; const dy = b.y - a.y;
             const len2 = dx*dx + dy*dy;
             if (len2 === 0) return { collides: false };
             let t = ((c.x - a.x)*dx + (c.y - a.y)*dy) / len2;
             t = Math.max(0, Math.min(1, t));
-            const projx = a.x + t*dx;
-            const projy = a.y + t*dy;
-            const dxp = c.x - projx;
-            const dyp = c.y - projy;
+            const projx = a.x + t*dx; const projy = a.y + t*dy;
+            const dxp = c.x - projx; const dyp = c.y - projy;
             const dist = Math.hypot(dxp, dyp);
             if (dist > c.radius + 0.001) return { collides: false };
-            const nx = dxp / dist || 0;
-            const ny = dyp / dist || 0;
+            const nx = dxp / dist || 0; const ny = dyp / dist || 0;
             return { collides: true, dist, nx, ny };
         }
 
@@ -111,71 +103,50 @@
             const downDir = gravityDir > 0 ? 1 : -1;
             const footY = ball.y + downDir * (ball.radius + 3);
             const foot = { x: ball.x, y: footY };
-
             let minDistLines = Infinity;
             for (const line of lines) {
                 for (let i = 0; i < line.length - 1; i++) {
                     const d = distanceToSegment(foot, line[i], line[i+1]);
-                    if (d < minDistLines) minDistLines = d;
+                    minDistLines = Math.min(minDistLines, d);
                 }
             }
-
-            let distToBoundary;
-            if (downDir > 0) {
-                distToBoundary = canvas.height - footY;
-            } else {
-                distToBoundary = footY;
-            }
-
-            const minDist = Math.min(minDistLines, distToBoundary);
-            return minDist < 8;
+            const distToBoundary = downDir > 0 
+                ? canvas.height - footY 
+                : footY;
+            return Math.min(minDistLines, distToBoundary) < 8;
         }
 
-        // ────────────────────────────────────────────────
-        // Физика
-        // ────────────────────────────────────────────────
+        // ─── Физика ───────────────────────────────────────────────
 
         function updatePhysics(dt) {
-            // Движение влево/вправо
             if (keys['a'] || keys['ф']) ball.vx -= MOVE_ACCELERATION * dt;
             if (keys['d'] || keys['в']) ball.vx += MOVE_ACCELERATION * dt;
 
-            // Прыжок
             const downDir = gravityDir > 0 ? 1 : -1;
             if ((keys['w'] || keys['ц']) && isOnGround()) {
                 ball.vy = -downDir * JUMP_VELOCITY;
             }
 
-            // Сопротивление воздуха
             const drag = 1 - AIR_DRAG * dt;
-            ball.vx *= drag;
-            ball.vy *= drag;
+            ball.vx *= drag; ball.vy *= drag;
 
-            // Гравитация
             ball.vy += gravityDir * GRAVITY * dt;
 
-            // Интеграция
             ball.x += ball.vx * dt;
             ball.y += ball.vy * dt;
 
-            // Коллизии
             resolveCollisions();
 
-            // Границы
             if (ball.x - ball.radius < 0)         { ball.x = ball.radius;         ball.vx *= -0.4; }
             if (ball.x + ball.radius > canvas.width) { ball.x = canvas.width - ball.radius; ball.vx *= -0.4; }
             if (ball.y - ball.radius < 0)         { ball.y = ball.radius;         ball.vy *= -0.4; }
             if (ball.y + ball.radius > canvas.height) { ball.y = canvas.height - ball.radius; ball.vy *= -0.4; }
         }
 
-        // ────────────────────────────────────────────────
-        // Отрисовка
-        // ────────────────────────────────────────────────
+        // ─── Отрисовка ────────────────────────────────────────────
 
         function redraw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Линии
             ctx.strokeStyle = '#000';
             ctx.lineWidth = 6;
             ctx.lineCap = 'round';
@@ -184,45 +155,34 @@
                 if (line.length < 2) continue;
                 ctx.beginPath();
                 ctx.moveTo(line[0].x, line[0].y);
-                for (let i = 1; i < line.length; i++) {
-                    ctx.lineTo(line[i].x, line[i].y);
-                }
+                for (let i = 1; i < line.length; i++) ctx.lineTo(line[i].x, line[i].y);
                 ctx.stroke();
             }
-
-            // Шар
             ctx.fillStyle = '#ff4444';
             ctx.shadowColor = 'rgba(0,0,0,0.4)';
             ctx.shadowBlur = 10;
-            ctx.shadowOffsetX = 3;
-            ctx.shadowOffsetY = 4;
+            ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 4;
             ctx.beginPath();
-            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
             ctx.fill();
             ctx.shadowBlur = 0;
         }
 
-        // ────────────────────────────────────────────────
-        // Игровой цикл
-        // ────────────────────────────────────────────────
+        // ─── Игровой цикл ─────────────────────────────────────────
 
         function gameLoop(now) {
-            const frameTime = Math.min((now - lastTime) / 1000, 0.05);
+            const frameTime = Math.min((now - lastTime)/1000, 0.05);
             lastTime = now;
             accumulator += frameTime;
-
             while (accumulator >= fixedDt) {
                 updatePhysics(fixedDt);
                 accumulator -= fixedDt;
             }
-
             redraw();
             requestAnimationFrame(gameLoop);
         }
 
-        // ────────────────────────────────────────────────
-        // Ввод
-        // ────────────────────────────────────────────────
+        // ─── Ввод ─────────────────────────────────────────────────
 
         window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
         window.addEventListener('keyup',   e => keys[e.key.toLowerCase()] = false);
@@ -232,7 +192,6 @@
             const rect = canvas.getBoundingClientRect();
             lastX = e.clientX - rect.left;
             lastY = e.clientY - rect.top;
-
             if (erasing) {
                 eraseNear(lastX, lastY);
             } else if (drawing) {
@@ -243,11 +202,9 @@
 
         function draw(e) {
             if ((!drawing && !erasing) || !(e.buttons & 1)) return;
-
             const rect = canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
-
             if (erasing) {
                 eraseNear(x, y);
             } else if (drawing && lines.length > 0) {
@@ -258,38 +215,63 @@
                     redraw();
                 }
             }
-
-            lastX = x;
-            lastY = y;
+            lastX = x; lastY = y;
         }
 
-        function stopDrawing() {
-            // просто отпускаем кнопку — рисование останавливается
-        }
+        function stopDrawing() {}
 
         canvas.addEventListener('mousedown', startDrawing);
         canvas.addEventListener('mousemove', draw);
         canvas.addEventListener('mouseup',   stopDrawing);
         canvas.addEventListener('mouseout',  stopDrawing);
 
-        // ────────────────────────────────────────────────
-        // Интерфейс
-        // ────────────────────────────────────────────────
+        // ─── Ластик ───────────────────────────────────────────────
 
-        document.getElementById('toggleGravity').onclick = () => {
-            gravityDir = -gravityDir;
-        };
+        function segmentIntersectsCircle(a, b, center, radius) {
+            const dx = b.x - a.x; const dy = b.y - a.y;
+            const len2 = dx*dx + dy*dy;
+            if (len2 === 0) return Math.hypot(center.x - a.x, center.y - a.y) <= radius;
+            let t = ((center.x - a.x)*dx + (center.y - a.y)*dy) / len2;
+            t = Math.max(0, Math.min(1, t));
+            const cx = a.x + t*dx; const cy = a.y + t*dy;
+            return Math.hypot(center.x - cx, center.y - cy) <= radius;
+        }
+
+        function eraseNear(x, y) {
+            const center = {x, y};
+            lines = lines.map(line => {
+                if (line.length < 2) return line;
+                const newLine = [];
+                let lastKept = line[0];
+                newLine.push(line[0]);
+                
+                for (let i = 1; i < line.length; i++) {
+                    const p = line[i];
+                    const prev = line[i-1];
+                    if (!segmentIntersectsCircle(prev, p, center, ERASER_RADIUS)) {
+                        newLine.push(p);
+                        lastKept = p;
+                    } else {
+                        lastKept = null;
+                    }
+                }
+                return newLine;
+            }).filter(line => line.length >= 2);
+            redraw();
+        }
+
+        // ─── Интерфейс ────────────────────────────────────────────
+
+        document.getElementById('toggleGravity').onclick = () => { gravityDir = -gravityDir; };
 
         document.getElementById('pencilTool').onclick = function() {
-            drawing = true;
-            erasing = false;
+            drawing = true; erasing = false;
             document.querySelectorAll('#controls button[id$="Tool"]').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
         };
 
         document.getElementById('eraserTool').onclick = function() {
-            erasing = true;
-            drawing = false;
+            erasing = true; drawing = false;
             document.querySelectorAll('#controls button[id$="Tool"]').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
         };
@@ -297,27 +279,21 @@
         document.getElementById('copyLevel').onclick = () => {
             const data = JSON.stringify(lines);
             const code = btoa(data);
-            navigator.clipboard.writeText(code).then(() => {
-                alert('Уровень скопирован в буфер обмена!');
-            }).catch(() => {
-                prompt('Не удалось скопировать автоматически. Скопируйте вручную:', code);
-            });
+            navigator.clipboard.writeText(code).then(() => alert('Скопировано!')).catch(() => prompt('Скопируйте:', code));
         };
 
         document.getElementById('importLevel').onclick = () => {
             const code = document.getElementById('importInput').value.trim();
-            if (!code) return alert('Вставьте код уровня');
+            if (!code) return alert('Вставьте код');
             try {
-                const json = atob(code);
-                lines = JSON.parse(json);
+                lines = JSON.parse(atob(code));
                 redraw();
-                alert('Уровень загружен!');
-            } catch (err) {
-                alert('Неверный формат кода уровня');
+                alert('Загружено!');
+            } catch {
+                alert('Неверный код');
             }
         };
 
-        // Запуск
         requestAnimationFrame(gameLoop);
     </script>
 </body>
