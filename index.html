@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>2D Платформер с Рисованием</title>
+    <style>
+        body { margin: 0; background: #f0f0f0; font-family: Arial, sans-serif; }
+        #canvas { border: 1px solid #000; background: #fff; display: block; margin: 10px auto; cursor: crosshair; }
+        #controls { text-align: center; margin: 10px; }
+        button { margin: 5px; padding: 10px 16px; font-size: 16px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; }
+        button.active { background-color: #4caf50; color: white; border-color: #388e3c; }
+        button:hover { background: #e0e0e0; }
+        button.active:hover { background: #45a049; }
+        #importInput { width: 340px; margin: 5px; padding: 10px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="toggleGravity">Переключить гравитацию</button>
+        <button id="pencilTool">Карандаш</button>
+        <button id="eraserTool">Ластик</button>
+        <button id="copyLevel">Скопировать уровень</button>
+        <button id="importLevel">Импортировать уровень</button>
+        <input type="text" id="importInput" placeholder="Вставьте код уровня сюда">
+    </div>
+    <canvas id="canvas" width="800" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let gravityDir = 1.0;
+        const GRAVITY = 800.0;
+        const JUMP_VELOCITY = 380.0;
+        const MOVE_ACCELERATION = 1800.0;
+        const COLLISION_DAMPING = 0.65;
+        const AIR_DRAG = 2.5;
+        const fixedDt = 1 / 60;
+        const ERASER_RADIUS = 20;
+
+        let ball = { x: 400, y: 100, vx: 0, vy: 0, radius: 20 };
+        let lines = [];
+        let drawing = false;   // инструмент выбран
+        let erasing = false;   // инструмент выбран
+        let lastX = 0, lastY = 0;
+        let keys = {};
+        let accumulator = 0;
+        let lastTime = performance.now();
+
+        // ────────────────────────────────────────────────
+        // Коллизии
+        // ────────────────────────────────────────────────
+
+        function distanceToSegment(p, a, b) {
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len2 = dx*dx + dy*dy;
+            if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+            let t = ((p.x - a.x)*dx + (p.y - a.y)*dy) / len2;
+            t = Math.max(0, Math.min(1, t));
+            const projx = a.x + t*dx;
+            const projy = a.y + t*dy;
+            return Math.hypot(p.x - projx, p.y - projy);
+        }
+
+        function getLineCollisionInfo(c, a, b) {
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len2 = dx*dx + dy*dy;
+            if (len2 === 0) return { collides: false };
+            let t = ((c.x - a.x)*dx + (c.y - a.y)*dy) / len2;
+            t = Math.max(0, Math.min(1, t));
+            const projx = a.x + t*dx;
+            const projy = a.y + t*dy;
+            const dxp = c.x - projx;
+            const dyp = c.y - projy;
+            const dist = Math.hypot(dxp, dyp);
+            if (dist > c.radius + 0.001) return { collides: false };
+            const nx = dxp / dist || 0;
+            const ny = dyp / dist || 0;
+            return { collides: true, dist, nx, ny };
+        }
+
+        function resolveCollisions() {
+            const maxIter = 5;
+            for (let iter = 0; iter < maxIter; iter++) {
+                let collided = false;
+                for (const line of lines) {
+                    for (let i = 0; i < line.length - 1; i++) {
+                        const info = getLineCollisionInfo(ball, line[i], line[i+1]);
+                        if (info.collides) {
+                            collided = true;
+                            const pen = ball.radius - info.dist;
+                            ball.x += info.nx * pen;
+                            ball.y += info.ny * pen;
+                            const dot = ball.vx * info.nx + ball.vy * info.ny;
+                            if (dot < 0) {
+                                ball.vx -= 2 * dot * info.nx;
+                                ball.vy -= 2 * dot * info.ny;
+                            }
+                            ball.vx *= COLLISION_DAMPING;
+                            ball.vy *= COLLISION_DAMPING;
+                        }
+                    }
+                }
+                if (!collided) break;
+            }
+        }
+
+        function isOnGround() {
+            const downDir = gravityDir > 0 ? 1 : -1;
+            const footY = ball.y + downDir * (ball.radius + 3);
+            const foot = { x: ball.x, y: footY };
+
+            let minDistLines = Infinity;
+            for (const line of lines) {
+                for (let i = 0; i < line.length - 1; i++) {
+                    const d = distanceToSegment(foot, line[i], line[i+1]);
+                    if (d < minDistLines) minDistLines = d;
+                }
+            }
+
+            let distToBoundary;
+            if (downDir > 0) {
+                distToBoundary = canvas.height - footY;
+            } else {
+                distToBoundary = footY;
+            }
+
+            const minDist = Math.min(minDistLines, distToBoundary);
+            return minDist < 8;
+        }
+
+        // ────────────────────────────────────────────────
+        // Физика
+        // ────────────────────────────────────────────────
+
+        function updatePhysics(dt) {
+            // Движение влево/вправо
+            if (keys['a'] || keys['ф']) ball.vx -= MOVE_ACCELERATION * dt;
+            if (keys['d'] || keys['в']) ball.vx += MOVE_ACCELERATION * dt;
+
+            // Прыжок
+            const downDir = gravityDir > 0 ? 1 : -1;
+            if ((keys['w'] || keys['ц']) && isOnGround()) {
+                ball.vy = -downDir * JUMP_VELOCITY;
+            }
+
+            // Сопротивление воздуха
+            const drag = 1 - AIR_DRAG * dt;
+            ball.vx *= drag;
+            ball.vy *= drag;
+
+            // Гравитация
+            ball.vy += gravityDir * GRAVITY * dt;
+
+            // Интеграция
+            ball.x += ball.vx * dt;
+            ball.y += ball.vy * dt;
+
+            // Коллизии
+            resolveCollisions();
+
+            // Границы
+            if (ball.x - ball.radius < 0)         { ball.x = ball.radius;         ball.vx *= -0.4; }
+            if (ball.x + ball.radius > canvas.width) { ball.x = canvas.width - ball.radius; ball.vx *= -0.4; }
+            if (ball.y - ball.radius < 0)         { ball.y = ball.radius;         ball.vy *= -0.4; }
+            if (ball.y + ball.radius > canvas.height) { ball.y = canvas.height - ball.radius; ball.vy *= -0.4; }
+        }
+
+        // ────────────────────────────────────────────────
+        // Отрисовка
+        // ────────────────────────────────────────────────
+
+        function redraw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Линии
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            for (const line of lines) {
+                if (line.length < 2) continue;
+                ctx.beginPath();
+                ctx.moveTo(line[0].x, line[0].y);
+                for (let i = 1; i < line.length; i++) {
+                    ctx.lineTo(line[i].x, line[i].y);
+                }
+                ctx.stroke();
+            }
+
+            // Шар
+            ctx.fillStyle = '#ff4444';
+            ctx.shadowColor = 'rgba(0,0,0,0.4)';
+            ctx.shadowBlur = 10;
+            ctx.shadowOffsetX = 3;
+            ctx.shadowOffsetY = 4;
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        // ────────────────────────────────────────────────
+        // Игровой цикл
+        // ────────────────────────────────────────────────
+
+        function gameLoop(now) {
+            const frameTime = Math.min((now - lastTime) / 1000, 0.05);
+            lastTime = now;
+            accumulator += frameTime;
+
+            while (accumulator >= fixedDt) {
+                updatePhysics(fixedDt);
+                accumulator -= fixedDt;
+            }
+
+            redraw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ────────────────────────────────────────────────
+        // Ввод
+        // ────────────────────────────────────────────────
+
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup',   e => keys[e.key.toLowerCase()] = false);
+
+        function startDrawing(e) {
+            if (e.button !== 0) return;
+            const rect = canvas.getBoundingClientRect();
+            lastX = e.clientX - rect.left;
+            lastY = e.clientY - rect.top;
+
+            if (erasing) {
+                eraseNear(lastX, lastY);
+            } else if (drawing) {
+                lines.push([{ x: lastX, y: lastY }]);
+                redraw();
+            }
+        }
+
+        function draw(e) {
+            if ((!drawing && !erasing) || !(e.buttons & 1)) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (erasing) {
+                eraseNear(x, y);
+            } else if (drawing && lines.length > 0) {
+                const line = lines[lines.length - 1];
+                const last = line[line.length - 1];
+                if (Math.hypot(x - last.x, y - last.y) > 2) {
+                    line.push({ x, y });
+                    redraw();
+                }
+            }
+
+            lastX = x;
+            lastY = y;
+        }
+
+        function stopDrawing() {
+            // просто отпускаем кнопку — рисование останавливается
+        }
+
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup',   stopDrawing);
+        canvas.addEventListener('mouseout',  stopDrawing);
+
+        // ────────────────────────────────────────────────
+        // Интерфейс
+        // ────────────────────────────────────────────────
+
+        document.getElementById('toggleGravity').onclick = () => {
+            gravityDir = -gravityDir;
+        };
+
+        document.getElementById('pencilTool').onclick = function() {
+            drawing = true;
+            erasing = false;
+            document.querySelectorAll('#controls button[id$="Tool"]').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+        };
+
+        document.getElementById('eraserTool').onclick = function() {
+            erasing = true;
+            drawing = false;
+            document.querySelectorAll('#controls button[id$="Tool"]').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+        };
+
+        document.getElementById('copyLevel').onclick = () => {
+            const data = JSON.stringify(lines);
+            const code = btoa(data);
+            navigator.clipboard.writeText(code).then(() => {
+                alert('Уровень скопирован в буфер обмена!');
+            }).catch(() => {
+                prompt('Не удалось скопировать автоматически. Скопируйте вручную:', code);
+            });
+        };
+
+        document.getElementById('importLevel').onclick = () => {
+            const code = document.getElementById('importInput').value.trim();
+            if (!code) return alert('Вставьте код уровня');
+            try {
+                const json = atob(code);
+                lines = JSON.parse(json);
+                redraw();
+                alert('Уровень загружен!');
+            } catch (err) {
+                alert('Неверный формат кода уровня');
+            }
+        };
+
+        // Запуск
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
